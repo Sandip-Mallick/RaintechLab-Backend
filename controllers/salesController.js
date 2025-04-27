@@ -666,7 +666,7 @@ exports.getTeamMembersSalesPerformance = async (req, res) => {
         console.log(`Found ${teamMembers.length} team members with sales permissions`);
         
         // Parse filter parameters for date filtering
-        const { startDate, endDate, year, month } = req.query;
+        const { startDate, endDate, year, month, startMonth, startYear, endMonth, endYear } = req.query;
         let dateMatch = {};
         
         if (startDate && endDate) {
@@ -674,6 +674,15 @@ exports.getTeamMembersSalesPerformance = async (req, res) => {
                 $gte: new Date(startDate), 
                 $lte: new Date(endDate) 
             };
+        } else if (startMonth && startYear && endMonth && endYear) {
+            // Month range filter using startMonth/startYear to endMonth/endYear
+            const startOfMonth = new Date(startYear, startMonth - 1, 1);
+            const endOfMonth = new Date(endYear, endMonth, 0); // Last day of end month
+            dateMatch.date = { 
+                $gte: startOfMonth, 
+                $lte: endOfMonth 
+            };
+            console.log(`Filtering between ${startMonth}/${startYear} and ${endMonth}/${endYear}`);
         } else if (year && month) {
             const startOfMonth = new Date(year, month - 1, 1);
             const endOfMonth = new Date(year, month, 0);
@@ -697,7 +706,11 @@ exports.getTeamMembersSalesPerformance = async (req, res) => {
             { 
                 $match: { 
                     ...dateMatch,
-                    employeeId: { $in: uniqueTeamMemberIds.map(id => id.toString()) }
+                    // Make sure we match employee IDs in string format OR as ObjectId
+                    $or: [
+                        { employeeId: { $in: uniqueTeamMemberIds.map(id => id.toString()) } },
+                        { employeeId: { $in: uniqueTeamMemberIds.map(id => new mongoose.Types.ObjectId(id)) } }
+                    ]
                 }
             },
             {

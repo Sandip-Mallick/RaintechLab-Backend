@@ -329,13 +329,53 @@ exports.deleteTarget = async (req, res) => {
 // Get targets for a team manager's team members
 exports.getTeamMembersTargets = async (req, res) => {
     try {
-        // Extract filter parameters from query
-        const { startMonth, startYear, endMonth, endYear, month, year } = req.query;
+        // Extract filter parameters from query - handle multiple possible formats
+        const { 
+            startMonth, startYear, endMonth, endYear, 
+            month, year,
+            fromDate, toDate  // Add support for date string format
+        } = req.query;
+        
+        console.log("Team member targets filter parameters:", { 
+            startMonth, startYear, endMonth, endYear, 
+            month, year,
+            fromDate, toDate
+        });
         
         let filter = {};
         
-        // Apply date range filter if provided
-        if (startMonth && startYear && endMonth && endYear) {
+        // Process date range filter - handle multiple filter formats
+        // Handle fromDate/toDate format (ISO string format)
+        if (fromDate && toDate) {
+            const fromDateObj = new Date(fromDate);
+            const toDateObj = new Date(toDate);
+            
+            const fromYear = fromDateObj.getFullYear();
+            const fromMonth = fromDateObj.getMonth() + 1; // JavaScript months are 0-indexed
+            const toYear = toDateObj.getFullYear();
+            const toMonth = toDateObj.getMonth() + 1;
+            
+            console.log(`Processing date range filter from ${fromMonth}/${fromYear} to ${toMonth}/${toYear}`);
+            
+            filter = {
+                $or: []
+            };
+            
+            // Add a condition for each month in the range
+            for (let y = fromYear; y <= toYear; y++) {
+                const startM = y === fromYear ? fromMonth : 1;
+                const endM = y === toYear ? toMonth : 12;
+                
+                for (let m = startM; m <= endM; m++) {
+                    filter.$or.push({
+                        month: m,
+                        year: y
+                    });
+                }
+            }
+        }
+        // Handle startMonth/startYear/endMonth/endYear format
+        else if (startMonth && startYear && endMonth && endYear) {
             filter = {
                 $or: []
             };
@@ -352,6 +392,8 @@ exports.getTeamMembersTargets = async (req, res) => {
                     });
                 }
             }
+            
+            console.log(`Filtering team targets from ${startMonth}/${startYear} to ${endMonth}/${endYear}`);
         } 
         // Apply specific month/year filter if provided
         else if (month && year) {
@@ -359,6 +401,17 @@ exports.getTeamMembersTargets = async (req, res) => {
                 month: parseInt(month),
                 year: parseInt(year)
             };
+            console.log(`Filtering team targets for specific month: ${month}/${year}`);
+        }
+        // Year-only filter
+        else if (year && !month) {
+            filter = {
+                year: parseInt(year)
+            };
+            console.log(`Filtering team targets for year: ${year}`);
+        }
+        else {
+            console.log("No date filters applied to team targets");
         }
         
         // Get the team manager's ID from the request
@@ -399,7 +452,15 @@ exports.getTeamMembersTargets = async (req, res) => {
             model: 'User'
         });
         
-        console.log(`Found ${teamMemberTargets.length} targets for team members`);
+        console.log(`Found ${teamMemberTargets.length} targets for team members with filter:`, filter);
+        
+        // Debug target types
+        const targetTypes = {};
+        teamMemberTargets.forEach(target => {
+            const type = target.targetType || 'unknown';
+            targetTypes[type] = (targetTypes[type] || 0) + 1;
+        });
+        console.log("Target types found:", targetTypes);
         
         // Use a Set to track processed target IDs to prevent duplicates
         const processedTargetIds = new Set();
@@ -420,11 +481,35 @@ exports.getTeamMembersTargets = async (req, res) => {
                 processedTargetIds.add(targetId);
                 return true;
             })
-            .map(target => ({
-                ...target.toObject(),
-                targetType: target.targetType || 'sales', // Ensure targetType is always set
-                assignedToModel: target.assignedToModel || 'User' // Ensure model is set
-            }));
+            .map(target => {
+                // Normalize the target type
+                let targetType = (target.targetType || '').toLowerCase();
+                
+                // Standardize target types
+                if (targetType === 'sale') targetType = 'sales';
+                if (targetType === 'order') targetType = 'orders';
+                if (!targetType) targetType = 'sales';  // Default value
+                
+                // Ensure we have the employee ID in multiple formats
+                const assignedToId = target.assignedTo && target.assignedTo._id ? 
+                    target.assignedTo._id.toString() : 
+                    (typeof target.assignedTo === 'string' ? target.assignedTo : null);
+                
+                return {
+                    ...target.toObject(),
+                    targetType: targetType,
+                    employeeId: assignedToId, // Add explicit employeeId field for frontend
+                    assignedToModel: target.assignedToModel || 'User' // Ensure model is set
+                };
+            });
+        
+        // Final check of formatted target types
+        const formattedTypes = {};
+        formattedTargets.forEach(target => {
+            const type = target.targetType || 'unknown';
+            formattedTypes[type] = (formattedTypes[type] || 0) + 1;
+        });
+        console.log("Formatted target types:", formattedTypes);
         
         res.status(200).json(formattedTargets);
     } catch (err) {
